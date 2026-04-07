@@ -1,0 +1,195 @@
+---
+title: "exercise-10"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(broom)
+library(cowplot)
+library(mosaic)
+library(ggExtra)
+library(skimr)
+library(sjPlot)
+library(emmeans)
+
+# importing data
+f <- "https://raw.githubusercontent.com/difiore/ada-datasets/refs/heads/main/AVONETdataset1.csv"
+d <- read_csv(f, col_names = TRUE)
+
+# winnowing
+d <- d |>
+  select(Species1, Family1, Order1, Beak.Length_Culmen, Beak.Width, Beak.Depth, Tarsus.Length, Wing.Length, Tail.Length, Mass, Habitat, Migration, Trophic.Level, Trophic.Niche, Primary.Lifestyle, Min.Latitude, Max.Latitude, Centroid.Latitude, Range.Size)
+skim(d)
+
+# filtering out NA values
+d <- d|> filter(!is.na(Trophic.Level))
+d <- d|> filter(!is.na(Migration))
+# converting numerical value for migration to factor
+d <- d |> mutate(Migration = as.factor(Migration))
+
+# making boxplots for log mass by trophic level and migration
+p1 <- d |>
+  ggplot(aes(x = Trophic.Level, y = log(Mass))) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.1)
+p1
+p2 <- d |>
+  ggplot(aes(x = Migration, y = log(Mass))) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.1)
+p2
+
+# making linear models
+m1 <- lm(log(Mass) ~ Trophic.Level, data = d)
+summary(m1)
+
+m2 <- lm(log(Mass) ~ Migration, data = d)
+summary(m2)
+# releveling to test differences
+m3 <- lm(log(Mass) ~ relevel(as.factor(Migration), ref = "2"), data = d)
+summary(m3)
+m4 <- lm(log(Mass) ~ relevel(as.factor(Migration), ref = "3"), data = d)
+summary(m4)
+
+# making anova for log mass by migration
+m2aov <- aov(log(Mass) ~ Migration, data = d)
+# using tukey post hoc analysis to test differences between migration values
+(posthoc <- TukeyHSD(m2aov, which = "Migration", conf.level = 0.95))
+
+# permuting f statistics for trophic level to test p value of observed f statistic
+permuted.F <- vector(length = 1000)
+for (i in 1:1000) {
+  d_perm <- d
+  d_perm$Trophic.Level <- sample(d$Trophic.Level)
+  permuted.F[[i]] <- aov(log(Mass) ~ Trophic.Level, data = d_perm) |>
+    tidy()|>
+    filter(term =="Trophic.Level") |>
+    pull(statistic)
+}
+observed_f <- aov(log(Mass) ~ Trophic.Level, data = d) |>
+  broom::tidy() |>
+  filter(term == "Trophic.Level")
+p.value <- mean(permuted.F > observed_f$statistic)
+p.value
+
+
+#Part 2
+# adding beak and tarsus length variables
+d <- d |>
+  mutate(
+    Relative.Beak.Length = resid(lm(log(Beak.Length_Culmen) ~ log(Mass), data = d)),
+    Relative.Tarsus.Length = resid(lm(log(Tarsus.Length) ~ log(Mass), data = d))
+  )
+
+# making violin plots for beak and tarsus length by nice and lifestyle
+p1 <- d |>
+  filter(!is.na(Primary.Lifestyle)) |>
+  ggplot(aes(x = Primary.Lifestyle, y = Relative.Tarsus.Length)) +
+  geom_violin() 
+p1
+
+p2 <- d |>
+  filter(!is.na(Trophic.Niche)) |>
+  ggplot(aes(x = Trophic.Niche, y = Relative.Beak.Length)) +
+  geom_violin()
+p2
+
+# Making hist of range size
+# Raw was right skewed so transformed Range.Size with log()
+p_log <- d |>
+  ggplot(aes(x = log(Range.Size))) +
+  geom_histogram()
+p_log
+
+# making anova model of log range size as function of migration
+m <- aov(log(Range.Size) ~ Migration, data = d)
+summary(m)
+# making linear model
+m1 <- lm(log(Range.Size) ~ Migration, data = d)
+summary(m1)
+
+#releveling with 2 as reference
+m2 <- lm(log(Range.Size) ~ relevel(Migration, ref = "2"), data = d)
+summary(m2)
+
+# tukey posthoc analysis
+tukey <- TukeyHSD(m, which = "Migration")
+tukey
+# all differ significantly
+
+# filtering dataset to only songbirds
+d <- d |>
+  filter(Order1 == "Passeriformes")
+
+# removing NA values
+d <- d |> filter(!is.na(Primary.Lifestyle) & !is.na(Trophic.Level))
+
+# making anova models
+aov1 <- aov(Relative.Beak.Length ~ Primary.Lifestyle, data = d)
+summary(aov1)
+
+aov2 <- aov(Relative.Beak.Length ~ Trophic.Level, data = d)
+summary(aov2)
+
+# making box plots
+p1 <- d |>
+  ggplot(aes(x = Primary.Lifestyle, y = Relative.Beak.Length)) +
+  geom_boxplot()
+p1
+
+p2 <- d |>
+  ggplot(aes(x = Trophic.Level, y = Relative.Beak.Length)) +
+  geom_boxplot()
+p2
+
+# making linear models
+m1 <- lm(Relative.Beak.Length ~ Primary.Lifestyle, data = d)
+summary(m1)
+
+m2 <- lm(Relative.Beak.Length ~ Trophic.Level, data = d)
+summary(m2)
+
+# two factor model
+m3 <- lm(Relative.Beak.Length ~ Primary.Lifestyle + Trophic.Level, data = d)
+summary(m3)
+
+# adding interaction variable
+m4 <- lm(Relative.Beak.Length ~ Primary.Lifestyle + Trophic.Level + Primary.Lifestyle:Trophic.Level, data = d)
+summary(m4)
+# significant p-value means the two explanatory variables are related and not independent
+
+# Making interaction plots
+# With raw data
+interaction.plot(
+  x.factor = d$Primary.Lifestyle,
+  trace.factor = d$Trophic.Level,
+  response = d$Relative.Beak.Length,
+  fun = mean
+)
+# Interaction plot with interaction variable
+emmip(
+  m4,
+  Trophic.Level ~ Primary.Lifestyle,
+)
+
+# Testing for equal variance
+stats1 <- d |>
+  group_by(Primary.Lifestyle) |>
+  summarize(
+    "mean(Relative.Beak.Length)" = mean(Relative.Beak.Length),
+    "sd(Relative.Beak.Length)" = sd(Relative.Beak.Length)
+  )
+max(stats1$`sd(Relative.Beak.Length)`) / min(stats1$`sd(Relative.Beak.Length)`)
+
+stats2 <- d |>
+  group_by(Trophic.Level) |>
+  summarize(
+    "mean(Relative.Beak.Length)" = mean(Relative.Beak.Length),
+    "sd(Relative.Beak.Length)" = sd(Relative.Beak.Length)
+  )
+max(stats2$`sd(Relative.Beak.Length)`) / min(stats2$`sd(Relative.Beak.Length)`)
+
+# Both are lower than 2 so equal variance is assumed
+```
